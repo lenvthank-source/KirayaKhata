@@ -76,9 +76,9 @@ jobs:
       - name: Build Signed APK
         id: build_apk
         env:
-          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          RAW_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RAW_STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          RAW_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           mkdir -p dist
@@ -90,10 +90,35 @@ jobs:
             VERSION_LABEL="build-${GITHUB_RUN_NUMBER}"
           fi
 
-          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
+          STORE_PASSWORD=$(printf '%s' "$RAW_STORE_PASSWORD" | tr -d '\r\n')
+          KEY_PASSWORD=$(printf '%s' "$RAW_KEY_PASSWORD" | tr -d '\r\n')
+          if [ -z "$KEY_PASSWORD" ] && [ -n "$STORE_PASSWORD" ]; then
+            KEY_PASSWORD="$STORE_PASSWORD"
+          fi
+
+          if [ -n "$RAW_KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ]; then
             echo "Decoding release upload keystore..."
-            printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "${{ github.workspace }}/my-upload-key.jks"
             export KEYSTORE_PATH="${{ github.workspace }}/my-upload-key.jks"
+            printf '%s' "$RAW_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_PATH"
+
+            if ! keytool -list -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" >/dev/null 2>&1; then
+              echo "::error::Could not open my-upload-key.jks with STORE_PASSWORD. Check RELEASE_KEYSTORE_BASE64 and STORE_PASSWORD secrets."
+              exit 1
+            fi
+
+            if ! keytool -list -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" -alias upload >/dev/null 2>&1; then
+              FOUND_ALIAS=$(keytool -list -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" 2>/dev/null | awk -F',' '/PrivateKeyEntry/{print $1; exit}')
+              if [ -n "$FOUND_ALIAS" ]; then
+                echo "::notice::Keystore did not contain alias 'upload'; found alias '$FOUND_ALIAS' and mapping it to 'upload' for this build."
+                keytool -changealias -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" -alias "$FOUND_ALIAS" -destalias upload -keypass "$KEY_PASSWORD"
+              else
+                echo "::error::No PrivateKeyEntry found inside my-upload-key.jks. Regenerate with -alias upload."
+                exit 1
+              fi
+            fi
+
+            export STORE_PASSWORD
+            export KEY_PASSWORD
             gradle :app:assembleRelease --no-daemon --console=plain
             APK_SRC="app/build/outputs/apk/release/app-release.apk"
             APK_NAME="KirayaKhata-${VERSION_LABEL}.apk"
