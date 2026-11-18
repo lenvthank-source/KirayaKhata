@@ -1,0 +1,6 @@
+{
+  "name": "KirayaKhata",
+  "description": "Offline-first Indian tenant rent, sub-meter electricity, advance/due ledger, and government main meter tracker with optional Google Drive backup and local .db export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

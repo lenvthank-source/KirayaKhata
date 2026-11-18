@@ -1,0 +1,120 @@
+name: Build KirayaKhata APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish APK to GitHub Releases'
+        required: true
+        type: boolean
+        default: true
+      release_tag:
+        description: 'Release tag when triggered manually (e.g. v1.0.0)'
+        required: false
+        type: string
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Test & Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Run Unit & Robolectric Tests
+        run: gradle :app:testDebugUnitTest --no-daemon
+
+      - name: Build Signed APK
+        id: build_apk
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          mkdir -p dist
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION_LABEL="${GITHUB_REF_NAME}"
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${{ inputs.release_tag }}" ]; then
+            VERSION_LABEL="${{ inputs.release_tag }}"
+          else
+            VERSION_LABEL="build-${GITHUB_RUN_NUMBER}"
+          fi
+
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
+            echo "Decoding release upload keystore..."
+            echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "${{ github.workspace }}/my-upload-key.jks"
+            export KEYSTORE_PATH="${{ github.workspace }}/my-upload-key.jks"
+            gradle :app:assembleRelease --no-daemon
+            APK_SRC="app/build/outputs/apk/release/app-release.apk"
+            APK_NAME="KirayaKhata-${VERSION_LABEL}.apk"
+            cp "$APK_SRC" "dist/${APK_NAME}"
+            echo "build_kind=release" >> "$GITHUB_OUTPUT"
+            echo "apk_name=${APK_NAME}" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${VERSION_LABEL}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Release signing secrets (RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD) are not configured yet. Building debug-signed preview APK instead. See BUILD_AND_GITHUB_APK.md to enable signed release APKs."
+            if [ -f "debug.keystore.base64" ]; then
+              base64 --decode debug.keystore.base64 > debug.keystore
+            elif [ ! -f "debug.keystore" ]; then
+              keytool -genkeypair -v -keystore debug.keystore -storepass android \
+                -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
+                -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            fi
+            gradle :app:assembleDebug --no-daemon
+            APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
+            APK_NAME="KirayaKhata-${VERSION_LABEL}-debug.apk"
+            cp "$APK_SRC" "dist/${APK_NAME}"
+            echo "build_kind=debug" >> "$GITHUB_OUTPUT"
+            echo "apk_name=${APK_NAME}" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${VERSION_LABEL}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload APK to Actions Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build_apk.outputs.apk_name }}
+          path: dist/*.apk
+          retention-days: 90
+
+      - name: Publish APK to GitHub Releases
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.build_apk.outputs.tag_name }}
+          name: KirayaKhata ${{ steps.build_apk.outputs.tag_name }}
+          prerelease: ${{ steps.build_apk.outputs.build_kind != 'release' }}
+          generate_release_notes: true
+          files: dist/*.apk
+          body: |
+            Automated KirayaKhata Android APK build (${{ steps.build_apk.outputs.build_kind }}).
+
+            Install on Android: Download the `.apk` file below and tap to install.
+
+      - name: Clean up temporary keystore
+        if: always()
+        run: rm -f "${{ github.workspace }}/my-upload-key.jks" debug.keystore

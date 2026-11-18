@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">KirayaKhata</string>
+    <string name="tagline">Monthly Rent, Sub-Meter &amp; Main Meter Ledger</string>
+    <string name="tab_ledger">Ledger</string>
+    <string name="tab_tenants">Tenants</string>
+    <string name="tab_main_meter">Main Meter</string>
+    <string name="add_tenant">Add Tenant</string>
+    <string name="edit_tenant">Edit Tenant</string>
+    <string name="record_entry">Record Reading &amp; Payment</string>
+    <string name="log_main_meter">Scan or Enter Bill</string>
+    <string name="settings_title">Settings</string>
+    <string name="backup_and_restore">Backup &amp; Restore</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="delete">Delete</string>
+    <string name="loading_records">Loading your ledger…</string>
+</resources>

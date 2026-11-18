@@ -1,0 +1,228 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidMonthKey(key) {
+      return key is string && key.size() == 7 && key.matches('^[0-9]{4}-(0[1-9]|1[0-2])$');
+    }
+
+    function isValidTenant(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.roomNumber is string && data.roomNumber.size() >= 1 && data.roomNumber.size() <= 40 &&
+             data.phone is string && data.phone.size() <= 20 &&
+             data.monthlyRent is number && data.monthlyRent >= 0 && data.monthlyRent <= 10000000 &&
+             data.initialMeterReading is number && data.initialMeterReading >= 0 && data.initialMeterReading <= 9999999 &&
+             data.openingBalance is number && data.openingBalance >= -10000000 && data.openingBalance <= 10000000 &&
+             data.active is bool;
+    }
+
+    function isValidMonthlyLedger(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             isValidId(data.tenantId) &&
+             isValidMonthKey(data.monthKey) &&
+             data.rentAmount is number && data.rentAmount >= 0 && data.rentAmount <= 10000000 &&
+             data.prevReading is number && data.prevReading >= 0 && data.prevReading <= 9999999 &&
+             data.currReading is number && data.currReading >= data.prevReading && data.currReading <= 9999999 &&
+             data.unitsConsumed is number && data.unitsConsumed >= 0 && data.unitsConsumed <= 9999999 &&
+             data.electricityMode in ['FIXED_RATE', 'MAIN_BILL_SPLIT'] &&
+             data.ratePerUnit is number && data.ratePerUnit >= 0 && data.ratePerUnit <= 1000 &&
+             data.electricityAmount is number && data.electricityAmount >= 0 && data.electricityAmount <= 10000000 &&
+             data.previousBalance is number && data.previousBalance >= -10000000 && data.previousBalance <= 10000000 &&
+             data.amountPaid is number && data.amountPaid >= 0 && data.amountPaid <= 20000000 &&
+             data.paymentMode in ['CASH', 'UPI', 'BANK'] &&
+             data.paymentNote is string && data.paymentNote.size() <= 200 &&
+             data.closingBalance is number && data.closingBalance >= -20000000 && data.closingBalance <= 20000000;
+    }
+
+    function isValidMainMeterLog(data, userId, monthKey) {
+      return data.userId is string && data.userId == userId &&
+             isValidMonthKey(data.monthKey) && data.monthKey == monthKey &&
+             data.consumerNumber is string && data.consumerNumber.size() <= 40 &&
+             data.prevReading is number && data.prevReading >= 0 && data.prevReading <= 99999999 &&
+             data.currReading is number && data.currReading >= data.prevReading && data.currReading <= 99999999 &&
+             data.unitsConsumed is number && data.unitsConsumed >= 0 && data.unitsConsumed <= 99999999 &&
+             data.govtBillAmount is number && data.govtBillAmount >= 0 && data.govtBillAmount <= 10000000 &&
+             data.billPaid is bool &&
+             data.notes is string && data.notes.size() <= 300;
+    }
+
+    function isValidBillingSettings(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.defaultRatePerUnit is number && data.defaultRatePerUnit >= 0 && data.defaultRatePerUnit <= 1000 &&
+             data.defaultElectricityMode in ['FIXED_RATE', 'MAIN_BILL_SPLIT'] &&
+             data.consumerNumber is string && data.consumerNumber.size() <= 40;
+    }
+
+    match /users/{userId}/tenants/{tenantId} {
+      allow get: if isOwner(userId) && isValidId(tenantId);
+      allow list: if isOwner(userId);
+      allow create: if isOwner(userId) &&
+                       isValidId(tenantId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'name', 'roomNumber', 'phone', 'monthlyRent',
+                         'initialMeterReading', 'openingBalance', 'active',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'name', 'roomNumber', 'phone', 'monthlyRent',
+                         'initialMeterReading', 'openingBalance', 'active',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidTenant(incoming(), userId) &&
+                       incoming().createdAt is timestamp &&
+                       incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp &&
+                       incoming().updatedAt <= request.time;
+      allow update: if isOwner(userId) &&
+                       isValidId(tenantId) &&
+                       isValidTenant(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp &&
+                       incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'name', 'roomNumber', 'phone', 'monthlyRent',
+                         'initialMeterReading', 'openingBalance', 'active', 'updatedAt'
+                       ]);
+      allow delete: if isOwner(userId) && isValidId(tenantId);
+    }
+
+    match /users/{userId}/monthlyLedgers/{ledgerId} {
+      allow get: if isOwner(userId) && isValidId(ledgerId);
+      allow list: if isOwner(userId);
+      allow create: if isOwner(userId) &&
+                       isValidId(ledgerId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'tenantId', 'monthKey', 'rentAmount',
+                         'prevReading', 'currReading', 'unitsConsumed',
+                         'electricityMode', 'ratePerUnit', 'electricityAmount',
+                         'previousBalance', 'amountPaid', 'paymentMode',
+                         'paymentNote', 'closingBalance', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'tenantId', 'monthKey', 'rentAmount',
+                         'prevReading', 'currReading', 'unitsConsumed',
+                         'electricityMode', 'ratePerUnit', 'electricityAmount',
+                         'previousBalance', 'amountPaid', 'paymentMode',
+                         'paymentNote', 'closingBalance', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidMonthlyLedger(incoming(), userId) &&
+                       incoming().createdAt is timestamp &&
+                       incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp &&
+                       incoming().updatedAt <= request.time &&
+                       exists(/databases/$(database)/documents/users/$(userId)/tenants/$(incoming().tenantId));
+      allow update: if isOwner(userId) &&
+                       isValidId(ledgerId) &&
+                       isValidMonthlyLedger(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().tenantId == existing().tenantId &&
+                       incoming().monthKey == existing().monthKey &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp &&
+                       incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'rentAmount', 'prevReading', 'currReading', 'unitsConsumed',
+                         'electricityMode', 'ratePerUnit', 'electricityAmount',
+                         'previousBalance', 'amountPaid', 'paymentMode',
+                         'paymentNote', 'closingBalance', 'updatedAt'
+                       ]);
+      allow delete: if isOwner(userId) && isValidId(ledgerId);
+    }
+
+    match /users/{userId}/mainMeterLogs/{monthKey} {
+      allow get: if isOwner(userId) && isValidMonthKey(monthKey);
+      allow list: if isOwner(userId);
+      allow create: if isOwner(userId) &&
+                       isValidMonthKey(monthKey) &&
+                       incoming().keys().hasAll([
+                         'userId', 'monthKey', 'consumerNumber',
+                         'prevReading', 'currReading', 'unitsConsumed',
+                         'govtBillAmount', 'billPaid', 'notes',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'monthKey', 'consumerNumber',
+                         'prevReading', 'currReading', 'unitsConsumed',
+                         'govtBillAmount', 'billPaid', 'notes',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidMainMeterLog(incoming(), userId, monthKey) &&
+                       incoming().createdAt is timestamp &&
+                       incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp &&
+                       incoming().updatedAt <= request.time;
+      allow update: if isOwner(userId) &&
+                       isValidMonthKey(monthKey) &&
+                       isValidMainMeterLog(incoming(), userId, monthKey) &&
+                       incoming().userId == existing().userId &&
+                       incoming().monthKey == existing().monthKey &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp &&
+                       incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'consumerNumber', 'prevReading', 'currReading',
+                         'unitsConsumed', 'govtBillAmount', 'billPaid',
+                         'notes', 'updatedAt'
+                       ]);
+      allow delete: if isOwner(userId) && isValidMonthKey(monthKey);
+    }
+
+    match /users/{userId}/settings/{settingId} {
+      allow get: if isOwner(userId) && isValidId(settingId);
+      allow list: if isOwner(userId);
+      allow create: if isOwner(userId) &&
+                       settingId == 'preferences' &&
+                       incoming().keys().hasAll([
+                         'userId', 'defaultRatePerUnit', 'defaultElectricityMode',
+                         'consumerNumber', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'defaultRatePerUnit', 'defaultElectricityMode',
+                         'consumerNumber', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidBillingSettings(incoming(), userId) &&
+                       incoming().createdAt is timestamp &&
+                       incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp &&
+                       incoming().updatedAt <= request.time;
+      allow update: if isOwner(userId) &&
+                       settingId == 'preferences' &&
+                       isValidBillingSettings(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp &&
+                       incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'defaultRatePerUnit', 'defaultElectricityMode',
+                         'consumerNumber', 'updatedAt'
+                       ]);
+      allow delete: if isOwner(userId) && settingId == 'preferences';
+    }
+  }
+}

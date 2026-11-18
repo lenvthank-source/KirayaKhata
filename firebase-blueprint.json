@@ -1,0 +1,289 @@
+{
+  "entities": {
+    "Tenant": {
+      "title": "Tenant",
+      "description": "A tenant renting a room, flat, or shop unit under a landlord account.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated landlord UID owning this tenant record."
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of the tenant."
+        },
+        "roomNumber": {
+          "type": "string",
+          "description": "Room, floor, portion, or shop label."
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact mobile number of the tenant."
+        },
+        "monthlyRent": {
+          "type": "number",
+          "description": "Base monthly rent in INR."
+        },
+        "initialMeterReading": {
+          "type": "number",
+          "description": "Starting sub-meter kWh reading when tenant joined or tracking started."
+        },
+        "openingBalance": {
+          "type": "number",
+          "description": "Opening balance in INR before first tracked month (positive = due, negative = advance)."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether the tenant is currently active or vacated."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (client submits FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last updated (client submits FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "name",
+        "roomNumber",
+        "phone",
+        "monthlyRent",
+        "initialMeterReading",
+        "openingBalance",
+        "active",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MonthlyLedger": {
+      "title": "MonthlyLedger",
+      "description": "Monthly rent, sub-meter reading, electricity calculation, payment, and carry-forward balance for a tenant.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated landlord UID."
+        },
+        "tenantId": {
+          "type": "string",
+          "description": "Referenced Tenant document ID."
+        },
+        "monthKey": {
+          "type": "string",
+          "description": "Billing month in YYYY-MM format."
+        },
+        "rentAmount": {
+          "type": "number",
+          "description": "Monthly rent charged in INR."
+        },
+        "prevReading": {
+          "type": "number",
+          "description": "Previous sub-meter reading in kWh."
+        },
+        "currReading": {
+          "type": "number",
+          "description": "Current sub-meter reading in kWh."
+        },
+        "unitsConsumed": {
+          "type": "number",
+          "description": "Consumed electricity units (currReading - prevReading)."
+        },
+        "electricityMode": {
+          "type": "string",
+          "enum": ["FIXED_RATE", "MAIN_BILL_SPLIT"],
+          "description": "Calculation method used for electricity charge."
+        },
+        "ratePerUnit": {
+          "type": "number",
+          "description": "Effective or fixed per-unit electricity rate in INR."
+        },
+        "electricityAmount": {
+          "type": "number",
+          "description": "Calculated electricity charge in INR."
+        },
+        "previousBalance": {
+          "type": "number",
+          "description": "Balance carried forward from previous month in INR (positive = due, negative = advance)."
+        },
+        "amountPaid": {
+          "type": "number",
+          "description": "Total amount paid by the tenant for this month in INR."
+        },
+        "paymentMode": {
+          "type": "string",
+          "enum": ["CASH", "UPI", "BANK"],
+          "description": "Mode of payment received."
+        },
+        "paymentNote": {
+          "type": "string",
+          "description": "Optional note about payment date or partial payment."
+        },
+        "closingBalance": {
+          "type": "number",
+          "description": "Resulting balance after payment in INR (positive = due, negative = advance)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (client submits FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (client submits FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "tenantId",
+        "monthKey",
+        "rentAmount",
+        "prevReading",
+        "currReading",
+        "unitsConsumed",
+        "electricityMode",
+        "ratePerUnit",
+        "electricityAmount",
+        "previousBalance",
+        "amountPaid",
+        "paymentMode",
+        "paymentNote",
+        "closingBalance",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MainMeterLog": {
+      "title": "MainMeterLog",
+      "description": "Monthly government electricity main meter reading and official DISCOM bill record.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated landlord UID."
+        },
+        "monthKey": {
+          "type": "string",
+          "description": "Billing month in YYYY-MM format."
+        },
+        "consumerNumber": {
+          "type": "string",
+          "description": "Government DISCOM meter or consumer account number."
+        },
+        "prevReading": {
+          "type": "number",
+          "description": "Previous main meter reading in kWh."
+        },
+        "currReading": {
+          "type": "number",
+          "description": "Current main meter reading in kWh."
+        },
+        "unitsConsumed": {
+          "type": "number",
+          "description": "Total units recorded on the government main meter."
+        },
+        "govtBillAmount": {
+          "type": "number",
+          "description": "Official government electricity bill amount in INR."
+        },
+        "billPaid": {
+          "type": "boolean",
+          "description": "Whether the government electricity bill has been paid."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Notes on billing cycle, subsidy, or common area usage."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (client submits FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (client submits FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "monthKey",
+        "consumerNumber",
+        "prevReading",
+        "currReading",
+        "unitsConsumed",
+        "govtBillAmount",
+        "billPaid",
+        "notes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "BillingSettings": {
+      "title": "BillingSettings",
+      "description": "Default landlord preferences for electricity calculation mode and per-unit rate.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated landlord UID."
+        },
+        "defaultRatePerUnit": {
+          "type": "number",
+          "description": "Default electricity rate in INR per kWh unit."
+        },
+        "defaultElectricityMode": {
+          "type": "string",
+          "enum": ["FIXED_RATE", "MAIN_BILL_SPLIT"],
+          "description": "Default electricity calculation mode."
+        },
+        "consumerNumber": {
+          "type": "string",
+          "description": "Saved government electricity consumer number."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (client submits FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (client submits FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "defaultRatePerUnit",
+        "defaultElectricityMode",
+        "consumerNumber",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/tenants/{tenantId}": {
+      "schema": { "$ref": "#/entities/Tenant" },
+      "description": "User-scoped collection of tenant profiles."
+    },
+    "/users/{userId}/monthlyLedgers/{ledgerId}": {
+      "schema": { "$ref": "#/entities/MonthlyLedger" },
+      "description": "User-scoped collection of monthly rent and sub-meter ledger entries."
+    },
+    "/users/{userId}/mainMeterLogs/{monthKey}": {
+      "schema": { "$ref": "#/entities/MainMeterLog" },
+      "description": "User-scoped collection of monthly government main meter logs."
+    },
+    "/users/{userId}/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/BillingSettings" },
+      "description": "User-scoped billing preferences document."
+    }
+  }
+}
