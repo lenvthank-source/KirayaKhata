@@ -30,7 +30,7 @@ To make GitHub Actions produce a **Signed Release APK** (which matches `app/buil
 
 1. **Where to run the keystore command**:
    - Open **Command Prompt / PowerShell** on Windows, **Terminal** on macOS/Linux, or the **Terminal** tab inside Android Studio. *(Do not run this on GitHub — run it once on your own computer so only you hold the private key file.)*
-   - If you get `"keytool is not recognized"`, install JDK 17 first (for example on Windows PowerShell: `winget install EclipseAdoptium.Temurin.17.JDK`, or on macOS: `brew install openjdk@17`), then reopen your terminal.
+   - If you get `"keytool is not recognized"`, install JDK 21 first (for example on Windows PowerShell: `winget install EclipseAdoptium.Temurin.21.JDK`, or on macOS: `brew install openjdk@21`), then reopen your terminal.
 
 2. **Generate your upload keystore once** (enter a password you will remember when prompted):
    ```bash

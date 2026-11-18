@@ -68,7 +68,7 @@ Pre-built Android `.apk` files are automatically built by GitHub Actions:
 ## Building Locally
 
 ### Prerequisites
-- **JDK 17**
+- **JDK 21** (required for Android SDK 36 & Robolectric tests)
 - **Android SDK** (`compileSdk` 36, `minSdk` 24, `targetSdk` 36)
 - **Gradle 9.3.1** (or Android Studio Ladybug / Meerkat+)
 
