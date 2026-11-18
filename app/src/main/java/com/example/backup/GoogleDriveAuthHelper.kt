@@ -10,7 +10,6 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.NoCredentialException
-import com.example.R
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.Scope
@@ -39,7 +38,24 @@ object GoogleDriveAuthHelper {
 
     suspend fun signInWithGoogle(activityContext: Context): Result<GoogleAccountInfo> {
         return try {
-            val serverClientId = activityContext.getString(R.string.default_web_client_id)
+            @Suppress("DiscouragedApi")
+            val clientIdResId = activityContext.resources.getIdentifier(
+                "default_web_client_id",
+                "string",
+                activityContext.packageName
+            )
+            val serverClientId = if (clientIdResId != 0) {
+                activityContext.getString(clientIdResId)
+            } else {
+                ""
+            }
+            if (serverClientId.isBlank()) {
+                return Result.failure(
+                    IllegalStateException(
+                        "Google Sign-In is not configured in this build (missing google-services.json). Use Phone Storage (.db Export & Restore) instead."
+                    )
+                )
+            }
             val option = GetSignInWithGoogleOption.Builder(serverClientId).build()
             val request = GetCredentialRequest.Builder()
                 .addCredentialOption(option)

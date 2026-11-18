@@ -58,6 +58,7 @@ To make GitHub Actions produce a **Signed Release APK** (which matches `app/buil
    - `RELEASE_KEYSTORE_BASE64`: Paste the Base64 string from step 3.
    - `STORE_PASSWORD`: Your keystore password.
    - `KEY_PASSWORD`: Your key password (usually the same password you typed above).
+   - *(Optional)* `GOOGLE_SERVICES_JSON_BASE64`: If your public repo omits `app/google-services.json`, the app still compiles and `.db` Phone Storage backup works normally; add your Base64-encoded `google-services.json` here only if you also want Google Drive Sign-In active in GitHub-built APKs.
 
 ### Step 3: Trigger & Download Your Final APK
 - **From GitHub Website (1 click)**:

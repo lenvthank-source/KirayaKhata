@@ -53,7 +53,9 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Prepare Debug Keystore for Tests
+      - name: Prepare Keystore & Optional Google Services Config
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
           if [ -f "debug.keystore.base64" ]; then
             tr -d '[:space:]' < debug.keystore.base64 | base64 --decode > debug.keystore
@@ -63,8 +65,13 @@ jobs:
               -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
+          if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ] && [ ! -f "app/google-services.json" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '[:space:]' | base64 --decode > app/google-services.json
+            echo "CLEANUP_GOOGLE_SERVICES=true" >> "$GITHUB_ENV"
+          fi
+
       - name: Run Unit & Robolectric Tests
-        run: gradle :app:testDebugUnitTest --no-daemon
+        run: gradle :app:testDebugUnitTest --no-daemon --console=plain
 
       - name: Build Signed APK
         id: build_apk
@@ -87,7 +94,7 @@ jobs:
             echo "Decoding release upload keystore..."
             printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "${{ github.workspace }}/my-upload-key.jks"
             export KEYSTORE_PATH="${{ github.workspace }}/my-upload-key.jks"
-            gradle :app:assembleRelease --no-daemon
+            gradle :app:assembleRelease --no-daemon --console=plain
             APK_SRC="app/build/outputs/apk/release/app-release.apk"
             APK_NAME="KirayaKhata-${VERSION_LABEL}.apk"
             cp "$APK_SRC" "dist/${APK_NAME}"
@@ -96,7 +103,7 @@ jobs:
             echo "tag_name=${VERSION_LABEL}" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::Release signing secrets (RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD) are not configured yet. Building debug-signed preview APK instead. See BUILD_AND_GITHUB_APK.md to enable signed release APKs."
-            gradle :app:assembleDebug --no-daemon
+            gradle :app:assembleDebug --no-daemon --console=plain
             APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
             APK_NAME="KirayaKhata-${VERSION_LABEL}-debug.apk"
             cp "$APK_SRC" "dist/${APK_NAME}"
@@ -126,6 +133,10 @@ jobs:
 
             Install on Android: Download the `.apk` file below and tap to install.
 
-      - name: Clean up temporary keystore
+      - name: Clean up temporary credentials
         if: always()
-        run: rm -f "${{ github.workspace }}/my-upload-key.jks" debug.keystore
+        run: |
+          rm -f "${{ github.workspace }}/my-upload-key.jks" debug.keystore
+          if [ "${CLEANUP_GOOGLE_SERVICES:-false}" = "true" ]; then
+            rm -f app/google-services.json
+          fi
