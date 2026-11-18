@@ -38,13 +38,30 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK Licenses
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort -r | head -n 1)
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null || true
+          else
+            echo "sdkmanager not found under $SDK_ROOT; relying on pre-installed licenses"
+          fi
 
       - name: Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
+
+      - name: Prepare Debug Keystore for Tests
+        run: |
+          if [ -f "debug.keystore.base64" ]; then
+            tr -d '[:space:]' < debug.keystore.base64 | base64 --decode > debug.keystore
+          elif [ ! -f "debug.keystore" ]; then
+            keytool -genkeypair -v -keystore debug.keystore -storepass android \
+              -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
+              -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
 
       - name: Run Unit & Robolectric Tests
         run: gradle :app:testDebugUnitTest --no-daemon
@@ -55,19 +72,20 @@ jobs:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           mkdir -p dist
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             VERSION_LABEL="${GITHUB_REF_NAME}"
-          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${{ inputs.release_tag }}" ]; then
-            VERSION_LABEL="${{ inputs.release_tag }}"
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "$INPUT_RELEASE_TAG" ]; then
+            VERSION_LABEL="$INPUT_RELEASE_TAG"
           else
             VERSION_LABEL="build-${GITHUB_RUN_NUMBER}"
           fi
 
           if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
             echo "Decoding release upload keystore..."
-            echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "${{ github.workspace }}/my-upload-key.jks"
+            printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "${{ github.workspace }}/my-upload-key.jks"
             export KEYSTORE_PATH="${{ github.workspace }}/my-upload-key.jks"
             gradle :app:assembleRelease --no-daemon
             APK_SRC="app/build/outputs/apk/release/app-release.apk"
@@ -78,13 +96,6 @@ jobs:
             echo "tag_name=${VERSION_LABEL}" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::Release signing secrets (RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD) are not configured yet. Building debug-signed preview APK instead. See BUILD_AND_GITHUB_APK.md to enable signed release APKs."
-            if [ -f "debug.keystore.base64" ]; then
-              base64 --decode debug.keystore.base64 > debug.keystore
-            elif [ ! -f "debug.keystore" ]; then
-              keytool -genkeypair -v -keystore debug.keystore -storepass android \
-                -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
-                -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-            fi
             gradle :app:assembleDebug --no-daemon
             APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
             APK_NAME="KirayaKhata-${VERSION_LABEL}-debug.apk"
