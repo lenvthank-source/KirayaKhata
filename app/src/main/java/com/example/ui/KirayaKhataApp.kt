@@ -253,6 +253,7 @@ fun KirayaKhataApp() {
                                     ocrSettings = ocrSettings,
                                     remoteBackupInfo = remoteBackupInfo,
                                     isBusy = isBackupBusy,
+                                    showDirectDriveOAuth = viewModel.isDirectDriveSignInAvailable,
                                     pendingDriveRestore = pendingDriveRestore,
                                     driveConsentFlow = viewModel.driveConsentPrompt,
                                     onBack = { showSettingsScreen = false },
@@ -273,6 +274,7 @@ fun KirayaKhataApp() {
                                     onDismissDriveRestore = viewModel::dismissDriveRestoreDialog,
                                     onDriveConsentResult = viewModel::onDriveConsentResult,
                                     onExportLocalDb = viewModel::exportLocalBackup,
+                                    onShareBackupToDrive = { viewModel.shareBackupToDrive(activityContext) },
                                     onImportLocalDb = viewModel::importLocalBackup,
                                     onSaveOcrSettings = viewModel::saveOcrSettings
                                 )

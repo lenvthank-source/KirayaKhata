@@ -159,4 +159,38 @@ class LocalBackupRestoreTest {
             assertFalse(prefs.multiHouseEnabledFlow.first())
         }
     }
+
+    @Test
+    fun `prepareShareableBackupSnapshot exports valid db via FileProvider and cleans stale snapshots`() {
+        runBlocking {
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val backupsDir = File(context.cacheDir, "backups").apply { mkdirs() }
+            val staleFile = File(backupsDir, "stale_old.db").apply { writeText("old") }
+            assertTrue(staleFile.exists())
+
+            val controller = com.example.backup.BackupController(
+                appContext = context,
+                scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
+            )
+            val result = controller.prepareShareableBackupSnapshot()
+            assertTrue("Expected share snapshot to succeed: ${result.exceptionOrNull()}", result.isSuccess)
+
+            val shared = result.getOrThrow()
+            assertTrue(shared.fileName.startsWith("KirayaKhata_Backup_"))
+            assertTrue(shared.fileName.endsWith(".db"))
+            assertTrue(shared.sizeBytes > 100L)
+            assertEquals("content", shared.uri.scheme)
+            assertFalse("Stale snapshot should be cleaned up", staleFile.exists())
+
+            val createdFile = File(backupsDir, shared.fileName)
+            assertTrue(createdFile.exists())
+            KirayaDatabaseHolder.validateBackupFile(createdFile)
+
+            val status = BackupPreferences(context).statusFlow.first()
+            assertTrue(status.lastBackupTimeMs > 0L)
+            assertEquals(shared.sizeBytes, status.lastBackupSizeBytes)
+
+            createdFile.delete()
+        }
+    }
 }

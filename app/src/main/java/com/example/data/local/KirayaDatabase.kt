@@ -48,6 +48,9 @@ object KirayaDatabaseHolder {
     @Volatile
     private var instance: KirayaDatabase? = null
 
+    @Volatile
+    private var instanceDbPath: String? = null
+
     private val _dbGeneration = MutableStateFlow(0)
     val dbGeneration: StateFlow<Int> = _dbGeneration.asStateFlow()
 
@@ -141,17 +144,30 @@ object KirayaDatabaseHolder {
     }
 
     fun getDatabase(context: Context): KirayaDatabase {
-        return instance ?: synchronized(dbLock) {
-            instance ?: Room.databaseBuilder(
-                context.applicationContext,
-                KirayaDatabase::class.java,
-                DB_NAME
-            )
-                .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
-                .addMigrations(MIGRATION_1_2)
-                .addCallback(seedDefaultPropertyCallback)
-                .build()
-                .also { instance = it }
+        val appContext = context.applicationContext
+        val targetPath = appContext.getDatabasePath(DB_NAME).absolutePath
+        val existing = instance
+        if (existing != null && instanceDbPath == targetPath) return existing
+        return synchronized(dbLock) {
+            val current = instance
+            if (current != null && instanceDbPath == targetPath) {
+                current
+            } else {
+                current?.close()
+                Room.databaseBuilder(
+                    appContext,
+                    KirayaDatabase::class.java,
+                    DB_NAME
+                )
+                    .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
+                    .addMigrations(MIGRATION_1_2)
+                    .addCallback(seedDefaultPropertyCallback)
+                    .build()
+                    .also {
+                        instance = it
+                        instanceDbPath = targetPath
+                    }
+            }
         }
     }
 
@@ -162,6 +178,7 @@ object KirayaDatabaseHolder {
             db.openHelper.writableDatabase
             instance?.close()
             instance = null
+            instanceDbPath = null
 
             val dbFile = appContext.getDatabasePath(DB_NAME)
             require(dbFile.exists() && dbFile.length() > 0L) {
@@ -180,6 +197,7 @@ object KirayaDatabaseHolder {
         synchronized(dbLock) {
             instance?.close()
             instance = null
+            instanceDbPath = null
 
             val targetDb = appContext.getDatabasePath(DB_NAME)
             targetDb.parentFile?.mkdirs()

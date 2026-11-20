@@ -36,6 +36,17 @@ object GoogleDriveAuthHelper {
     private const val TAG = "GoogleDriveAuthHelper"
     const val DRIVE_APPDATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata"
 
+    fun isGoogleSignInConfigured(context: Context): Boolean {
+        @Suppress("DiscouragedApi")
+        val clientIdResId = context.resources.getIdentifier(
+            "default_web_client_id",
+            "string",
+            context.packageName
+        )
+        if (clientIdResId == 0) return false
+        return context.getString(clientIdResId).isNotBlank()
+    }
+
     suspend fun signInWithGoogle(activityContext: Context): Result<GoogleAccountInfo> {
         return try {
             @Suppress("DiscouragedApi")
@@ -52,7 +63,7 @@ object GoogleDriveAuthHelper {
             if (serverClientId.isBlank()) {
                 return Result.failure(
                     IllegalStateException(
-                        "Google Sign-In is not configured in this build (missing google-services.json). Use Phone Storage (.db Export & Restore) instead."
+                        "Direct Google Sign-In is not configured in this build. Use Save Backup (Drive / Phone) or Share to Drive instead."
                     )
                 )
             }

@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.HomeWork
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.WarningAmber
@@ -83,6 +84,7 @@ fun BackupRestoreScreen(
     ocrSettings: BillOcrSettings,
     remoteBackupInfo: DriveBackupMetadata?,
     isBusy: Boolean,
+    showDirectDriveOAuth: Boolean,
     pendingDriveRestore: DriveBackupMetadata?,
     driveConsentFlow: kotlinx.coroutines.flow.Flow<DriveConsentPrompt>,
     onBack: () -> Unit,
@@ -98,6 +100,7 @@ fun BackupRestoreScreen(
     onDismissDriveRestore: () -> Unit,
     onDriveConsentResult: (PendingDriveAction, android.content.Intent?) -> Unit,
     onExportLocalDb: (Uri) -> Unit,
+    onShareBackupToDrive: () -> Unit,
     onImportLocalDb: (Uri) -> Unit,
     onSaveOcrSettings: (preferGemini: Boolean, apiKey: String) -> Unit
 ) {
@@ -342,7 +345,7 @@ fun BackupRestoreScreen(
             }
         }
 
-        // Last Backup Hero Card (WhatsApp-style)
+        // Primary Backup & Restore Hero Card (Zero-Config Google Drive & Phone Storage)
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -365,7 +368,7 @@ fun BackupRestoreScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Icon(
-                                    imageVector = if (status.isGoogleConnected) Icons.Rounded.CloudDone else Icons.Rounded.Backup,
+                                    imageVector = if (status.lastBackupTimeMs > 0L) Icons.Rounded.CloudDone else Icons.Rounded.Backup,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(26.dp)
@@ -391,50 +394,23 @@ fun BackupRestoreScreen(
                         }
                     }
 
-                    if (remoteBackupInfo != null) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            shape = MaterialTheme.shapes.small,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = "Google Drive copy found: ${formatBackupTime(remoteBackupInfo.modifiedTimeMs)} (${formatByteSize(remoteBackupInfo.sizeBytes)})",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.padding(10.dp)
-                            )
-                        }
-                    }
-
-                    if (!status.lastError.isNullOrBlank()) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.errorContainer,
-                            shape = MaterialTheme.shapes.small,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = status.lastError,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.padding(10.dp)
-                            )
-                        }
-                    }
-
                     Text(
-                        text = "Backups are saved as a private app database inside your Google Drive (hidden from normal Drive folders), just like WhatsApp.",
+                        text = "Save a complete KirayaKhata database (.db) directly to Google Drive or Phone Storage, or restore it anytime — no account setup needed.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Button(
-                        onClick = onBackupNow,
+                        onClick = {
+                            val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+                            exportLauncher.launch("KirayaKhata_Backup_$stamp.db")
+                        },
                         enabled = !isBusy,
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp)
-                            .testTag("drive_backup_now_button")
+                            .testTag("export_local_db_button")
                     ) {
                         if (isBusy) {
                             CircularProgressIndicator(
@@ -445,190 +421,29 @@ fun BackupRestoreScreen(
                             Spacer(Modifier.width(10.dp))
                             Text("Working…")
                         } else {
-                            Icon(Icons.Rounded.Backup, contentDescription = null)
+                            Icon(Icons.Rounded.FileUpload, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Back Up to Google Drive Now")
+                            Text("Save Backup (Drive / Phone)")
                         }
                     }
-                }
-            }
-        }
-
-        // Google Account & Schedule Card
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = MaterialTheme.shapes.large,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = if (status.isGoogleConnected) Icons.Rounded.AccountCircle else Icons.Rounded.CloudOff,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "Google Account & Schedule",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (status.isGoogleConnected) {
-                                    status.connectedName?.takeIf { it.isNotBlank() } ?: "Google Account"
-                                } else {
-                                    "Not connected"
-                                },
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = status.connectedEmail ?: "Optional — connect to enable Drive backup",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        if (status.isGoogleConnected) {
-                            OutlinedButton(
-                                onClick = onDisconnectGoogle,
-                                enabled = !isBusy,
-                                modifier = Modifier.testTag("disconnect_google_button")
-                            ) {
-                                Text("Disconnect")
-                            }
-                        } else {
-                            OutlinedButton(
-                                onClick = onConnectGoogle,
-                                enabled = !isBusy,
-                                modifier = Modifier.testTag("connect_google_button")
-                            ) {
-                                Text("Connect")
-                            }
-                        }
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Rounded.Schedule,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "Auto-Backup to Google Drive",
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        BackupFrequency.entries.forEach { freq ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable(enabled = !isBusy) { onSelectFrequency(freq) }
-                                    .padding(vertical = 4.dp)
-                                    .testTag("freq_${freq.name.lowercase()}"),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = status.frequency == freq,
-                                    onClick = { if (!isBusy) onSelectFrequency(freq) }
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Column {
-                                    Text(
-                                        text = freq.label,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = freq.subtitle,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                    OutlinedButton(
-                        onClick = onRequestDriveRestore,
-                        enabled = !isBusy,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("restore_from_drive_button")
-                    ) {
-                        Icon(Icons.Rounded.CloudDownload, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Restore from Google Drive")
-                    }
-                }
-            }
-        }
-
-        // Local .db File Export / Import Card
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = MaterialTheme.shapes.large,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "Phone Storage (.db File)",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = "Export a portable SQLite database (.db) file directly to your phone Downloads or SD card, or restore from a saved .db file anytime offline.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         OutlinedButton(
-                            onClick = {
-                                val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
-                                exportLauncher.launch("KirayaKhata_Backup_$stamp.db")
-                            },
+                            onClick = onShareBackupToDrive,
                             enabled = !isBusy,
                             shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .height(48.dp)
-                                .testTag("export_local_db_button")
+                                .testTag("share_backup_to_drive_button")
                         ) {
-                            Icon(Icons.Rounded.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Export .db")
+                            Text("Share to Drive", maxLines = 1)
                         }
 
                         OutlinedButton(
@@ -644,6 +459,7 @@ fun BackupRestoreScreen(
                             },
                             enabled = !isBusy,
                             shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .height(48.dp)
@@ -651,7 +467,205 @@ fun BackupRestoreScreen(
                         ) {
                             Icon(Icons.Rounded.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Restore .db")
+                            Text("Restore Backup", maxLines = 1)
+                        }
+                    }
+
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Tip: Choose Google Drive or Downloads in the file picker menu (☰). If Drive is hidden on Save, tap Share to Drive and select Save to Drive.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Optional Direct Google Account Auto-Backup Card (only shown in builds configured with Google Sign-In)
+        if (showDirectDriveOAuth) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = MaterialTheme.shapes.large,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (status.isGoogleConnected) Icons.Rounded.AccountCircle else Icons.Rounded.CloudOff,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "Direct Google Account Auto-Backup",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+
+                        if (remoteBackupInfo != null) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = MaterialTheme.shapes.small,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "Google Drive copy found: ${formatBackupTime(remoteBackupInfo.modifiedTimeMs)} (${formatByteSize(remoteBackupInfo.sizeBytes)})",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
+                        }
+
+                        if (!status.lastError.isNullOrBlank()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.errorContainer,
+                                shape = MaterialTheme.shapes.small,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = status.lastError,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (status.isGoogleConnected) {
+                                        status.connectedName?.takeIf { it.isNotBlank() } ?: "Google Account"
+                                    } else {
+                                        "Not connected"
+                                    },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = status.connectedEmail ?: "Optional — connect for background Drive sync",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            if (status.isGoogleConnected) {
+                                OutlinedButton(
+                                    onClick = onDisconnectGoogle,
+                                    enabled = !isBusy,
+                                    modifier = Modifier.testTag("disconnect_google_button")
+                                ) {
+                                    Text("Disconnect")
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = onConnectGoogle,
+                                    enabled = !isBusy,
+                                    modifier = Modifier.testTag("connect_google_button")
+                                ) {
+                                    Text("Connect")
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Rounded.Schedule,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "Auto-Backup Schedule",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            BackupFrequency.entries.forEach { freq ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(enabled = !isBusy) { onSelectFrequency(freq) }
+                                        .padding(vertical = 4.dp)
+                                        .testTag("freq_${freq.name.lowercase()}"),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = status.frequency == freq,
+                                        onClick = { if (!isBusy) onSelectFrequency(freq) }
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Column {
+                                        Text(
+                                            text = freq.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = freq.subtitle,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onBackupNow,
+                                enabled = !isBusy,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("drive_backup_now_button")
+                            ) {
+                                Icon(Icons.Rounded.Backup, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Back Up")
+                            }
+
+                            OutlinedButton(
+                                onClick = onRequestDriveRestore,
+                                enabled = !isBusy,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("restore_from_drive_button")
+                            ) {
+                                Icon(Icons.Rounded.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Restore")
+                            }
                         }
                     }
                 }
@@ -843,7 +857,7 @@ fun BackupRestoreScreen(
                     tint = MaterialTheme.colorScheme.secondary
                 )
             },
-            title = { Text("Restore from Local File?") },
+            title = { Text("Restore Backup File?") },
             text = {
                 Text(
                     "The selected database file will be verified and will replace all tenants, monthly rent records, and main meter logs currently stored on this device."

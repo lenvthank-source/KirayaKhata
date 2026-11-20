@@ -846,16 +846,48 @@ class KirayaViewModel(
         }
     }
 
+    val isDirectDriveSignInAvailable: Boolean
+        get() = GoogleDriveAuthHelper.isGoogleSignInConfigured(appContext)
+
     fun exportLocalBackup(uri: Uri) {
         viewModelScope.launch {
             val res = backupController.exportLocalDbToUri(uri)
             res.fold(
                 onSuccess = { bytes ->
                     val kb = (bytes / 1024L).coerceAtLeast(1L)
-                    _snackbarEvents.tryEmit("Exported database backup ($kb KB)")
+                    _snackbarEvents.tryEmit("Backup saved successfully ($kb KB)")
                 },
                 onFailure = { error ->
-                    _snackbarEvents.tryEmit(error.localizedMessage ?: "Failed to export backup file")
+                    _snackbarEvents.tryEmit(error.localizedMessage ?: "Failed to save backup file")
+                }
+            )
+        }
+    }
+
+    fun shareBackupToDrive(activityContext: Context) {
+        viewModelScope.launch {
+            val res = backupController.prepareShareableBackupSnapshot()
+            res.fold(
+                onSuccess = { shared ->
+                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/octet-stream"
+                        putExtra(Intent.EXTRA_STREAM, shared.uri)
+                        putExtra(Intent.EXTRA_SUBJECT, shared.fileName)
+                        putExtra(Intent.EXTRA_TITLE, shared.fileName)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    val chooser = Intent.createChooser(sendIntent, "Save or Share KirayaKhata Backup")
+                    if (activityContext !is android.app.Activity) {
+                        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    try {
+                        activityContext.startActivity(chooser)
+                    } catch (_: android.content.ActivityNotFoundException) {
+                        _snackbarEvents.tryEmit("No app found to share backup file")
+                    }
+                },
+                onFailure = { error ->
+                    _snackbarEvents.tryEmit(error.localizedMessage ?: "Failed to prepare backup file")
                 }
             )
         }
@@ -866,7 +898,7 @@ class KirayaViewModel(
             val res = backupController.importLocalDbFromUri(uri)
             res.fold(
                 onSuccess = {
-                    _snackbarEvents.tryEmit("Database restored from local .db file")
+                    _snackbarEvents.tryEmit("Database restored successfully")
                 },
                 onFailure = { error ->
                     _snackbarEvents.tryEmit(error.localizedMessage ?: "Invalid or corrupt backup file")

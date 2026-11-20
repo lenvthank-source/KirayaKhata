@@ -2,6 +2,7 @@ package com.example.backup
 
 import android.content.Context
 import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
@@ -18,7 +19,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.TimeUnit
+
+data class ShareBackupFile(
+    val uri: Uri,
+    val fileName: String,
+    val sizeBytes: Long
+)
 
 class BackupController(
     private val appContext: Context,
@@ -236,6 +246,40 @@ class BackupController(
             Result.failure(e)
         } finally {
             if (tempFile.exists()) tempFile.delete()
+            _isBusy.value = false
+        }
+    }
+
+    suspend fun prepareShareableBackupSnapshot(): Result<ShareBackupFile> {
+        _isBusy.value = true
+        return try {
+            val sharedFile = withContext(Dispatchers.IO) {
+                val backupsDir = File(appContext.cacheDir, "backups").apply { mkdirs() }
+                backupsDir.listFiles()?.forEach { old ->
+                    if (old.isFile && old.name.endsWith(".db")) {
+                        old.delete()
+                    }
+                }
+                val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+                val fileName = "KirayaKhata_Backup_$stamp.db"
+                val targetFile = File(backupsDir, fileName)
+                KirayaDatabaseHolder.exportDatabaseSnapshot(appContext, targetFile)
+                val uri = FileProvider.getUriForFile(
+                    appContext,
+                    "${appContext.packageName}.fileprovider",
+                    targetFile
+                )
+                ShareBackupFile(
+                    uri = uri,
+                    fileName = fileName,
+                    sizeBytes = targetFile.length()
+                )
+            }
+            prefs.recordBackupSuccess(System.currentTimeMillis(), sharedFile.sizeBytes)
+            Result.success(sharedFile)
+        } catch (e: Exception) {
+            Result.failure(e)
+        } finally {
             _isBusy.value = false
         }
     }
