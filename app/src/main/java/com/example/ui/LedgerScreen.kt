@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CalendarToday
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -40,6 +41,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -55,6 +58,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -109,6 +113,7 @@ fun LedgerScreen(
         extraChargesNote: String,
         previousBalance: Double,
         amountPaid: Double,
+        paidDateMs: Long,
         paymentMode: PaymentMode,
         paymentNote: String,
         onDone: () -> Unit
@@ -261,7 +266,7 @@ fun LedgerScreen(
             isScanningBill = isScanningBill,
             onScanBill = onScanBill,
             onDismiss = { editingSummary = null },
-            onSave = { rent, prev, curr, mode, rate, elec, maint, extra, extraNote, prevBal, paid, payMode, note ->
+            onSave = { rent, prev, curr, mode, rate, elec, maint, extra, extraNote, prevBal, paid, paidDateMs, payMode, note ->
                 onSaveMonthlyEntry(
                     targetSummary.tenant.id,
                     data.selectedMonthKey,
@@ -276,6 +281,7 @@ fun LedgerScreen(
                     extraNote,
                     prevBal,
                     paid,
+                    paidDateMs,
                     payMode,
                     note
                 ) {
@@ -531,8 +537,12 @@ private fun TenantLedgerRowCard(
                         )
                     }
                     MiniMetric(
-                        "Paid (${ledger.resolvedPaymentMode.label})",
-                        BillingCalculator.formatInr(ledger.amountPaid),
+                        label = if (ledger.amountPaid > 0.005 && ledger.paidDateMs > 0L) {
+                            "Paid ${BillingCalculator.formatPaymentDateShort(ledger.paidDateMs)} • ${ledger.resolvedPaymentMode.label}"
+                        } else {
+                            "Paid (${ledger.resolvedPaymentMode.label})"
+                        },
+                        value = BillingCalculator.formatInr(ledger.amountPaid),
                         highlight = true
                     )
                 }
@@ -662,6 +672,7 @@ private fun RecordEntryBottomSheet(
         extraChargesNote: String,
         previousBalance: Double,
         amountPaid: Double,
+        paidDateMs: Long,
         paymentMode: PaymentMode,
         paymentNote: String
     ) -> Unit,
@@ -674,6 +685,14 @@ private fun RecordEntryBottomSheet(
     val propertyName = data.properties.firstOrNull { it.id == summary.tenant.propertyId }?.name
     val mainLog = data.mainMeterLogs.firstOrNull {
         it.propertyId == summary.tenant.propertyId && it.monthKey == data.selectedMonthKey
+    }
+    val resolvedDefaultRate = remember(summary.tenant, data.selectedMonthKey, data.allLedgers, data.settings.defaultRatePerUnit) {
+        BillingCalculator.resolveEffectiveElectricityRate(
+            tenant = summary.tenant,
+            monthKey = data.selectedMonthKey,
+            allLedgers = data.allLedgers,
+            fallbackDefaultRate = data.settings.defaultRatePerUnit
+        )
     }
 
     var rentText by remember(summary.tenant.id, data.selectedMonthKey) {
@@ -690,8 +709,8 @@ private fun RecordEntryBottomSheet(
     var elecMode by remember(summary.tenant.id, data.selectedMonthKey) {
         mutableStateOf(existing?.resolvedElectricityMode ?: data.settings.resolvedDefaultMode)
     }
-    var rateText by remember(summary.tenant.id, data.selectedMonthKey) {
-        mutableStateOf(formatNumberInputWithZero(existing?.ratePerUnit ?: data.settings.defaultRatePerUnit))
+    var rateText by remember(summary.tenant.id, data.selectedMonthKey, resolvedDefaultRate) {
+        mutableStateOf(formatNumberInputWithZero(existing?.ratePerUnit ?: resolvedDefaultRate))
     }
     var useProportionalSplit by remember { mutableStateOf(false) }
     var maintenanceText by remember(summary.tenant.id, data.selectedMonthKey) {
@@ -712,6 +731,16 @@ private fun RecordEntryBottomSheet(
     var paidText by remember(summary.tenant.id, data.selectedMonthKey) {
         mutableStateOf(if (existing != null) formatNumberInputWithZero(existing.amountPaid) else "")
     }
+    var paidDateMs by remember(summary.tenant.id, data.selectedMonthKey) {
+        mutableStateOf(
+            when {
+                existing != null && existing.paidDateMs > 0L -> existing.paidDateMs
+                existing != null && existing.amountPaid > 0.005 -> System.currentTimeMillis()
+                else -> 0L
+            }
+        )
+    }
+    var showPaidDatePicker by remember { mutableStateOf(false) }
     var paymentMode by remember(summary.tenant.id, data.selectedMonthKey) {
         mutableStateOf(existing?.resolvedPaymentMode ?: PaymentMode.UPI)
     }
@@ -1178,7 +1207,11 @@ private fun RecordEntryBottomSheet(
                 )
                 TextButton(
                     onClick = {
-                        paidText = formatNumberInputWithZero(totalPayable.coerceAtLeast(0.0))
+                        val full = totalPayable.coerceAtLeast(0.0)
+                        paidText = formatNumberInputWithZero(full)
+                        if (full > 0.005 && paidDateMs <= 0L) {
+                            paidDateMs = System.currentTimeMillis()
+                        }
                     }
                 ) {
                     Icon(Icons.Rounded.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -1189,7 +1222,14 @@ private fun RecordEntryBottomSheet(
 
             OutlinedTextField(
                 value = paidText,
-                onValueChange = { paidText = it; validationError = null },
+                onValueChange = { next ->
+                    paidText = next
+                    validationError = null
+                    val parsed = next.toDoubleOrNull() ?: 0.0
+                    if (parsed > 0.005 && paidDateMs <= 0L) {
+                        paidDateMs = System.currentTimeMillis()
+                    }
+                },
                 label = { Text("Amount Paid by Tenant (₹)") },
                 placeholder = { Text("0") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -1198,6 +1238,62 @@ private fun RecordEntryBottomSheet(
                     .fillMaxWidth()
                     .testTag("entry_paid_input")
             )
+
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showPaidDatePicker = true }
+                    .testTag("entry_paid_date_button")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.CalendarToday,
+                            contentDescription = "Select payment date",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Payment Date",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = if (paidVal > 0.005) {
+                                    val effectiveDate = if (paidDateMs > 0L) paidDateMs else System.currentTimeMillis()
+                                    BillingCalculator.formatPaymentDate(effectiveDate)
+                                } else if (paidDateMs > 0L) {
+                                    "${BillingCalculator.formatPaymentDate(paidDateMs)} (enter amount)"
+                                } else {
+                                    "Auto-fills today when amount entered"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                    Text(
+                        text = "Change",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
 
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 PaymentMode.entries.forEachIndexed { idx, mode ->
@@ -1297,23 +1393,31 @@ private fun RecordEntryBottomSheet(
                             validationError = "Enter a valid non-negative payment amount."
                         effectiveRate < 0.0 ->
                             validationError = "Electricity rate cannot be negative."
-                        else -> onSave(
-                            parsedRent,
-                            parsedPrev,
-                            parsedCurr,
-                            elecMode,
-                            effectiveRate,
-                            if (tracksSubMeter) {
-                                BillingCalculator.roundToTwoDecimals((parsedCurr - parsedPrev) * effectiveRate)
-                            } else 0.0,
-                            parsedMaint,
-                            parsedExtra,
-                            extraChargesNoteText.trim(),
-                            prevBalance,
-                            parsedPaid,
-                            paymentMode,
-                            noteText
-                        )
+                        else -> {
+                            val finalPaidDateMs = when {
+                                parsedPaid <= 0.005 -> 0L
+                                paidDateMs > 0L -> paidDateMs
+                                else -> System.currentTimeMillis()
+                            }
+                            onSave(
+                                parsedRent,
+                                parsedPrev,
+                                parsedCurr,
+                                elecMode,
+                                effectiveRate,
+                                if (tracksSubMeter) {
+                                    BillingCalculator.roundToTwoDecimals((parsedCurr - parsedPrev) * effectiveRate)
+                                } else 0.0,
+                                parsedMaint,
+                                parsedExtra,
+                                extraChargesNoteText.trim(),
+                                prevBalance,
+                                parsedPaid,
+                                finalPaidDateMs,
+                                paymentMode,
+                                noteText
+                            )
+                        }
                     }
                 },
                 enabled = !isSaving,
@@ -1337,4 +1441,67 @@ private fun RecordEntryBottomSheet(
             }
         }
     }
+
+    if (showPaidDatePicker) {
+        val initialUtcMillis = localMillisToUtcMidnight(
+            if (paidDateMs > 0L) paidDateMs else System.currentTimeMillis()
+        )
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialUtcMillis)
+        DatePickerDialog(
+            onDismissRequest = { showPaidDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { utcMillis ->
+                            paidDateMs = utcMidnightToLocalNoon(utcMillis)
+                        }
+                        showPaidDatePicker = false
+                    }
+                ) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPaidDatePicker = false }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+}
+
+private fun localMillisToUtcMidnight(localMillis: Long): Long {
+    val localCal = java.util.Calendar.getInstance().apply { timeInMillis = localMillis }
+    val utcCal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+        clear()
+        set(
+            localCal.get(java.util.Calendar.YEAR),
+            localCal.get(java.util.Calendar.MONTH),
+            localCal.get(java.util.Calendar.DAY_OF_MONTH),
+            0,
+            0,
+            0
+        )
+    }
+    return utcCal.timeInMillis
+}
+
+private fun utcMidnightToLocalNoon(utcMillis: Long): Long {
+    val utcCal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+        timeInMillis = utcMillis
+    }
+    val localCal = java.util.Calendar.getInstance().apply {
+        clear()
+        set(
+            utcCal.get(java.util.Calendar.YEAR),
+            utcCal.get(java.util.Calendar.MONTH),
+            utcCal.get(java.util.Calendar.DAY_OF_MONTH),
+            12,
+            0,
+            0
+        )
+    }
+    return localCal.timeInMillis
 }

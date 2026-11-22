@@ -21,6 +21,7 @@ import com.example.domain.MeterReconciliation
 import com.example.domain.MonthlyDashboardSummary
 import com.example.domain.ReconciliationChartData
 import com.example.domain.TenantMonthSummary
+import com.example.export.TenantStatementPdfGenerator
 import com.example.model.BillingSettings
 import com.example.model.DEFAULT_PROPERTY_ID
 import com.example.model.ElectricityMode
@@ -35,6 +36,7 @@ import com.example.model.UiState
 import com.example.ocr.BillOcrEngine
 import com.example.ocr.ExtractedBillData
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +49,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
 
 data class PropertyLedgerGroup(
     val property: Property,
@@ -121,6 +125,9 @@ class KirayaViewModel(
 
     private val _isScanningBill = MutableStateFlow(false)
     val isScanningBill: StateFlow<Boolean> = _isScanningBill.asStateFlow()
+
+    private val _isExportingPdf = MutableStateFlow(false)
+    val isExportingPdf: StateFlow<Boolean> = _isExportingPdf.asStateFlow()
 
     private val _snackbarEvents = MutableSharedFlow<String>(extraBufferCapacity = 6)
     val snackbarEvents = _snackbarEvents.asSharedFlow()
@@ -475,6 +482,7 @@ class KirayaViewModel(
         defaultMaintenance: Double = 0.0,
         meterTrackingMode: MeterTrackingMode = MeterTrackingMode.SUB_METER,
         initialMeterReading: Double,
+        electricityRatePerUnit: Double = 8.0,
         openingBalance: Double,
         active: Boolean,
         onSuccess: () -> Unit
@@ -491,6 +499,8 @@ class KirayaViewModel(
                 defaultMaintenance = BillingCalculator.roundToTwoDecimals(defaultMaintenance),
                 meterTrackingMode = meterTrackingMode,
                 initialMeterReading = initialMeterReading,
+                electricityRatePerUnit = BillingCalculator.roundToTwoDecimals(electricityRatePerUnit),
+                rateEffectiveMonth = _selectedMonthKey.value,
                 openingBalance = openingBalance,
                 active = active
             )
@@ -552,6 +562,7 @@ class KirayaViewModel(
         extraChargesNote: String = "",
         previousBalance: Double,
         amountPaid: Double,
+        paidDateMs: Long = 0L,
         paymentMode: PaymentMode,
         paymentNote: String,
         onSuccess: () -> Unit
@@ -577,6 +588,7 @@ class KirayaViewModel(
                 extraChargesNote = extraChargesNote,
                 previousBalance = BillingCalculator.roundToTwoDecimals(previousBalance),
                 amountPaid = BillingCalculator.roundToTwoDecimals(amountPaid),
+                paidDateMs = paidDateMs,
                 paymentMode = paymentMode,
                 paymentNote = paymentNote,
                 closingBalance = closing
@@ -966,6 +978,102 @@ class KirayaViewModel(
                 },
                 onFailure = { error ->
                     _snackbarEvents.tryEmit(error.localizedMessage ?: "Could not scan bill")
+                }
+            )
+        }
+    }
+
+    fun shareTenantStatementPdf(
+        activityContext: Context,
+        tenant: Tenant,
+        propertyName: String,
+        showPropertyName: Boolean,
+        ledgers: List<MonthlyLedger>
+    ) {
+        viewModelScope.launch {
+            _isExportingPdf.value = true
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    TenantStatementPdfGenerator.generateShareablePdfFile(
+                        context = appContext,
+                        tenant = tenant,
+                        propertyName = propertyName,
+                        showPropertyName = showPropertyName,
+                        ledgers = ledgers
+                    )
+                }.let { Result.success(it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            } finally {
+                _isExportingPdf.value = false
+            }
+
+            result.fold(
+                onSuccess = { shared ->
+                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/pdf"
+                        putExtra(Intent.EXTRA_STREAM, shared.uri)
+                        putExtra(Intent.EXTRA_SUBJECT, "${tenant.name} — Rent Payment History")
+                        putExtra(Intent.EXTRA_TITLE, shared.fileName)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    val chooser = Intent.createChooser(sendIntent, "Share ${tenant.name}'s PDF Statement")
+                    if (activityContext !is android.app.Activity) {
+                        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    try {
+                        activityContext.startActivity(chooser)
+                    } catch (_: android.content.ActivityNotFoundException) {
+                        _snackbarEvents.tryEmit("No app found to share PDF file")
+                    }
+                },
+                onFailure = { error ->
+                    _snackbarEvents.tryEmit(error.localizedMessage ?: "Failed to generate PDF statement")
+                }
+            )
+        }
+    }
+
+    fun saveTenantStatementPdfToUri(
+        uri: Uri,
+        tenant: Tenant,
+        propertyName: String,
+        showPropertyName: Boolean,
+        ledgers: List<MonthlyLedger>
+    ) {
+        viewModelScope.launch {
+            _isExportingPdf.value = true
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    val outStream = appContext.contentResolver.openOutputStream(uri)
+                        ?: throw IOException("Unable to open destination PDF file.")
+                    outStream.use { stream ->
+                        TenantStatementPdfGenerator.writePdfToOutputStream(
+                            tenant = tenant,
+                            propertyName = propertyName,
+                            showPropertyName = showPropertyName,
+                            ledgers = ledgers,
+                            outputStream = stream
+                        )
+                    }
+                }
+                Result.success(Unit)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            } finally {
+                _isExportingPdf.value = false
+            }
+
+            result.fold(
+                onSuccess = {
+                    _snackbarEvents.tryEmit("PDF statement saved for ${tenant.name}")
+                },
+                onFailure = { error ->
+                    _snackbarEvents.tryEmit(error.localizedMessage ?: "Failed to save PDF statement")
                 }
             )
         }

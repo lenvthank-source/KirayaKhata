@@ -8,6 +8,7 @@ import com.example.data.local.MainMeterLogEntity
 import com.example.data.local.MonthlyLedgerEntity
 import com.example.data.local.PropertyEntity
 import com.example.data.local.TenantEntity
+import com.example.domain.BillingCalculator
 import com.example.model.BillingSettings
 import com.example.model.DEFAULT_PROPERTY_ID
 import com.example.model.ElectricityMode
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import java.util.UUID
+import kotlin.math.abs
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class LocalLedgerRepository(private val appContext: Context) {
@@ -188,6 +190,8 @@ class LocalLedgerRepository(private val appContext: Context) {
         defaultMaintenance: Double = 0.0,
         meterTrackingMode: MeterTrackingMode = MeterTrackingMode.SUB_METER,
         initialMeterReading: Double,
+        electricityRatePerUnit: Double = 8.0,
+        rateEffectiveMonth: String = "",
         openingBalance: Double,
         active: Boolean
     ): Result<Unit> {
@@ -202,12 +206,25 @@ class LocalLedgerRepository(private val appContext: Context) {
             require(monthlyRent in 0.0..10_000_000.0) { "Monthly rent must be between ₹0 and ₹1,00,00,000." }
             require(defaultMaintenance in 0.0..1_000_000.0) { "Maintenance must be between ₹0 and ₹10,00,000." }
             require(initialMeterReading in 0.0..9_999_999.0) { "Initial meter reading is out of valid range." }
+            require(electricityRatePerUnit in 0.0..1000.0) { "Electricity rate must be between ₹0 and ₹1,000/unit." }
             require(openingBalance in -10_000_000.0..10_000_000.0) { "Opening balance is out of valid range." }
 
             val now = System.currentTimeMillis()
             val dao = db().tenantDao()
             val existing = if (!tenantId.isNullOrBlank()) dao.getById(tenantId) else null
             val id = existing?.id ?: tenantId?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+            val roundedRate = BillingCalculator.roundToTwoDecimals(electricityRatePerUnit)
+            val rateChanged = existing != null && abs(existing.electricityRatePerUnit - roundedRate) > 0.0001
+            val prevRate = when {
+                existing == null -> roundedRate
+                rateChanged -> existing.electricityRatePerUnit
+                else -> existing.previousElectricityRatePerUnit
+            }
+            val effectiveFromMonth = when {
+                existing == null -> ""
+                rateChanged -> rateEffectiveMonth.ifBlank { BillingCalculator.currentMonthKey() }
+                else -> existing.rateEffectiveFromMonth
+            }
             dao.upsert(
                 TenantEntity(
                     id = id,
@@ -219,6 +236,9 @@ class LocalLedgerRepository(private val appContext: Context) {
                     defaultMaintenance = defaultMaintenance,
                     meterTrackingMode = meterTrackingMode.name,
                     initialMeterReading = initialMeterReading,
+                    electricityRatePerUnit = roundedRate,
+                    previousElectricityRatePerUnit = prevRate,
+                    rateEffectiveFromMonth = effectiveFromMonth,
                     openingBalance = openingBalance,
                     active = active,
                     createdAtMs = existing?.createdAtMs ?: now,
@@ -270,6 +290,7 @@ class LocalLedgerRepository(private val appContext: Context) {
         extraChargesNote: String = "",
         previousBalance: Double,
         amountPaid: Double,
+        paidDateMs: Long = 0L,
         paymentMode: PaymentMode,
         paymentNote: String,
         closingBalance: Double
@@ -277,6 +298,7 @@ class LocalLedgerRepository(private val appContext: Context) {
         val ledgerId = "${tenantId}_${monthKey}"
         val trimmedNote = paymentNote.trim()
         val trimmedExtraNote = extraChargesNote.trim()
+        val resolvedPaidDateMs = if (amountPaid > 0.005) paidDateMs.coerceAtLeast(0L) else 0L
         return try {
             require(tenantId.isNotBlank()) { "Tenant ID must not be blank." }
             require(monthKey.matches(Regex("^[0-9]{4}-(0[1-9]|1[0-2])$"))) { "Invalid month format." }
@@ -312,6 +334,7 @@ class LocalLedgerRepository(private val appContext: Context) {
                     extraChargesNote = trimmedExtraNote,
                     previousBalance = previousBalance,
                     amountPaid = amountPaid,
+                    paidDateMs = resolvedPaidDateMs,
                     paymentMode = paymentMode.name,
                     paymentNote = trimmedNote,
                     closingBalance = closingBalance,
@@ -436,6 +459,9 @@ class LocalLedgerRepository(private val appContext: Context) {
         defaultMaintenance = defaultMaintenance,
         meterTrackingMode = meterTrackingMode,
         initialMeterReading = initialMeterReading,
+        electricityRatePerUnit = electricityRatePerUnit,
+        previousElectricityRatePerUnit = previousElectricityRatePerUnit,
+        rateEffectiveFromMonth = rateEffectiveFromMonth,
         openingBalance = openingBalance,
         active = active,
         createdAtMs = createdAtMs,
@@ -458,6 +484,7 @@ class LocalLedgerRepository(private val appContext: Context) {
         extraChargesNote = extraChargesNote,
         previousBalance = previousBalance,
         amountPaid = amountPaid,
+        paidDateMs = paidDateMs,
         paymentMode = paymentMode,
         paymentNote = paymentNote,
         closingBalance = closingBalance,

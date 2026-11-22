@@ -149,6 +149,51 @@ object BillingCalculator {
         return "$name $year"
     }
 
+    fun formatPaymentDate(epochMs: Long): String {
+        if (epochMs <= 0L) return ""
+        val cal = Calendar.getInstance().apply { timeInMillis = epochMs }
+        val day = cal.get(Calendar.DAY_OF_MONTH)
+        val month = monthNames.getOrNull(cal.get(Calendar.MONTH)) ?: ""
+        val year = cal.get(Calendar.YEAR)
+        return String.format(Locale.US, "%02d %s %04d", day, month, year)
+    }
+
+    fun formatPaymentDateShort(epochMs: Long): String {
+        if (epochMs <= 0L) return ""
+        val cal = Calendar.getInstance().apply { timeInMillis = epochMs }
+        val day = cal.get(Calendar.DAY_OF_MONTH)
+        val month = monthNames.getOrNull(cal.get(Calendar.MONTH)) ?: ""
+        return String.format(Locale.US, "%02d %s", day, month)
+    }
+
+    /**
+     * Resolves the sub-meter electricity unit rate for [tenant] in [monthKey] strictly forward-only:
+     * 1. Already-recorded months always preserve their saved [MonthlyLedger.ratePerUnit].
+     * 2. Unrecorded months strictly earlier than [Tenant.rateEffectiveFromMonth] fall back to
+     *    the nearest prior ledger's rate or [Tenant.previousElectricityRatePerUnit].
+     * 3. Unrecorded months from [Tenant.rateEffectiveFromMonth] onwards use [Tenant.electricityRatePerUnit].
+     */
+    fun resolveEffectiveElectricityRate(
+        tenant: Tenant,
+        monthKey: String,
+        allLedgers: List<MonthlyLedger>,
+        fallbackDefaultRate: Double = 8.0
+    ): Double {
+        val existing = allLedgers.firstOrNull { it.tenantId == tenant.id && it.monthKey == monthKey }
+        if (existing != null) return existing.ratePerUnit
+
+        if (tenant.rateEffectiveFromMonth.isNotBlank() && monthKey < tenant.rateEffectiveFromMonth) {
+            val priorLedger = allLedgers
+                .filter { it.tenantId == tenant.id && it.monthKey < monthKey }
+                .maxByOrNull { it.monthKey }
+            if (priorLedger != null) return priorLedger.ratePerUnit
+            if (tenant.previousElectricityRatePerUnit > 0.0) return tenant.previousElectricityRatePerUnit
+            return fallbackDefaultRate
+        }
+
+        return if (tenant.electricityRatePerUnit > 0.0) tenant.electricityRatePerUnit else fallbackDefaultRate
+    }
+
     /**
      * Resolves the carry-forward balance entering [monthKey] for [tenant].
      * Uses the latest recorded MonthlyLedger before [monthKey], or [Tenant.openingBalance].

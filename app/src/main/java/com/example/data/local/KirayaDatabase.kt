@@ -22,7 +22,7 @@ import java.io.File
         MainMeterLogEntity::class,
         BillingSettingsEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class KirayaDatabase : RoomDatabase() {
@@ -127,6 +127,22 @@ object KirayaDatabaseHolder {
         }
     }
 
+    val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `tenants` ADD COLUMN `electricityRatePerUnit` REAL NOT NULL DEFAULT 8.0")
+            db.execSQL("ALTER TABLE `tenants` ADD COLUMN `previousElectricityRatePerUnit` REAL NOT NULL DEFAULT 8.0")
+            db.execSQL("ALTER TABLE `tenants` ADD COLUMN `rateEffectiveFromMonth` TEXT NOT NULL DEFAULT ''")
+            db.execSQL(
+                """
+                UPDATE `tenants`
+                SET `electricityRatePerUnit` = COALESCE((SELECT `defaultRatePerUnit` FROM `billing_settings` WHERE `id` = 'preferences' LIMIT 1), 8.0),
+                    `previousElectricityRatePerUnit` = COALESCE((SELECT `defaultRatePerUnit` FROM `billing_settings` WHERE `id` = 'preferences' LIMIT 1), 8.0)
+                """.trimIndent()
+            )
+            db.execSQL("ALTER TABLE `monthly_ledgers` ADD COLUMN `paidDateMs` INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
     private val seedDefaultPropertyCallback = object : RoomDatabase.Callback() {
         override fun onCreate(db: SupportSQLiteDatabase) {
             super.onCreate(db)
@@ -160,7 +176,7 @@ object KirayaDatabaseHolder {
                     DB_NAME
                 )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .addCallback(seedDefaultPropertyCallback)
                     .build()
                     .also {

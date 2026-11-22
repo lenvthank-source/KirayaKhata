@@ -99,6 +99,7 @@ fun KirayaKhataApp() {
     val multiHouseEnabled by viewModel.multiHouseEnabled.collectAsStateWithLifecycle()
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
     val isScanningBill by viewModel.isScanningBill.collectAsStateWithLifecycle()
+    val isExportingPdf by viewModel.isExportingPdf.collectAsStateWithLifecycle()
     val selectedDiscomId by viewModel.selectedDiscomId.collectAsStateWithLifecycle()
     val ocrSettings by viewModel.ocrSettings.collectAsStateWithLifecycle()
     val backupStatus by viewModel.backupStatus.collectAsStateWithLifecycle()
@@ -340,6 +341,7 @@ fun KirayaKhataApp() {
                                                 TenantsScreen(
                                                     data = data,
                                                     isSaving = isSaving,
+                                                    isExportingPdf = isExportingPdf,
                                                     showAddTenantSheet = showAddTenantSheet,
                                                     onSetShowAddTenantSheet = { showAddTenantSheet = it },
                                                     onSearchQueryChange = viewModel::setSearchQuery,
@@ -348,7 +350,25 @@ fun KirayaKhataApp() {
                                                     onToggleShowVacated = viewModel::toggleShowVacatedTenants,
                                                     onSaveTenant = viewModel::saveTenant,
                                                     onSetTenantActive = viewModel::setTenantActive,
-                                                    onDeleteTenant = viewModel::deleteTenant
+                                                    onDeleteTenant = viewModel::deleteTenant,
+                                                    onShareTenantPdf = { tenant, propertyName, showProp, ledgers ->
+                                                        viewModel.shareTenantStatementPdf(
+                                                            activityContext = activityContext,
+                                                            tenant = tenant,
+                                                            propertyName = propertyName,
+                                                            showPropertyName = showProp,
+                                                            ledgers = ledgers
+                                                        )
+                                                    },
+                                                    onSaveTenantPdf = { uri, tenant, propertyName, showProp, ledgers ->
+                                                        viewModel.saveTenantStatementPdfToUri(
+                                                            uri = uri,
+                                                            tenant = tenant,
+                                                            propertyName = propertyName,
+                                                            showPropertyName = showProp,
+                                                            ledgers = ledgers
+                                                        )
+                                                    }
                                                 )
                                             }
 

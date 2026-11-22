@@ -23,6 +23,13 @@ import java.io.File
 @Config(sdk = [36])
 class LocalBackupRestoreTest {
 
+    @org.junit.Before
+    fun clearFileProviderCache() {
+        val cacheField = androidx.core.content.FileProvider::class.java.getDeclaredField("sCache")
+        cacheField.isAccessible = true
+        (cacheField.get(null) as? MutableMap<*, *>)?.clear()
+    }
+
     @Test
     fun `export validate and restore database snapshot preserves tenant and ledger records`() {
         runBlocking {

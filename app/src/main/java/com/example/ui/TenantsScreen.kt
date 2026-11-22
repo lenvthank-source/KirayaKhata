@@ -1,6 +1,9 @@
 package com.example.ui
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -30,6 +33,8 @@ import androidx.compose.material.icons.rounded.HomeWork
 import androidx.compose.material.icons.rounded.PeopleOutline
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Phone
+import androidx.compose.material.icons.rounded.PictureAsPdf
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -64,6 +69,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.domain.BillingCalculator
+import com.example.export.TenantStatementPdfGenerator
 import com.example.model.DEFAULT_PROPERTY_ID
 import com.example.model.MeterTrackingMode
 import com.example.model.MonthlyLedger
@@ -81,6 +87,7 @@ private enum class OpeningBalanceType(val label: String) {
 fun TenantsScreen(
     data: KirayaDashboardData,
     isSaving: Boolean,
+    isExportingPdf: Boolean,
     showAddTenantSheet: Boolean,
     onSetShowAddTenantSheet: (Boolean) -> Unit,
     onSearchQueryChange: (String) -> Unit,
@@ -97,12 +104,15 @@ fun TenantsScreen(
         defaultMaintenance: Double,
         meterTrackingMode: MeterTrackingMode,
         initialMeterReading: Double,
+        electricityRatePerUnit: Double,
         openingBalance: Double,
         active: Boolean,
         onDone: () -> Unit
     ) -> Unit,
     onSetTenantActive: (tenantId: String, active: Boolean) -> Unit,
-    onDeleteTenant: (tenantId: String, onDone: () -> Unit) -> Unit
+    onDeleteTenant: (tenantId: String, onDone: () -> Unit) -> Unit,
+    onShareTenantPdf: (Tenant, String, Boolean, List<MonthlyLedger>) -> Unit,
+    onSaveTenantPdf: (Uri, Tenant, String, Boolean, List<MonthlyLedger>) -> Unit
 ) {
     var selectedTenantId by remember { mutableStateOf<String?>(null) }
     var editingTenant by remember { mutableStateOf<Tenant?>(null) }
@@ -111,14 +121,16 @@ fun TenantsScreen(
 
     if (selectedTenant != null) {
         val propertyName = data.properties.firstOrNull { it.id == selectedTenant.propertyId }?.name ?: "Main House"
+        val tenantLedgers = data.allLedgers
+            .filter { it.tenantId == selectedTenant.id }
+            .sortedByDescending { it.monthKey }
         TenantPassbookScreen(
             tenant = selectedTenant,
             propertyName = propertyName,
             showPropertyName = data.multiHouseEnabled,
-            ledgers = data.allLedgers
-                .filter { it.tenantId == selectedTenant.id }
-                .sortedByDescending { it.monthKey },
+            ledgers = tenantLedgers,
             isSaving = isSaving,
+            isExportingPdf = isExportingPdf,
             onBack = { selectedTenantId = null },
             onEdit = { editingTenant = selectedTenant },
             onToggleActive = { onSetTenantActive(selectedTenant.id, !selectedTenant.active) },
@@ -126,6 +138,12 @@ fun TenantsScreen(
                 onDeleteTenant(selectedTenant.id) {
                     selectedTenantId = null
                 }
+            },
+            onSharePdf = {
+                onShareTenantPdf(selectedTenant, propertyName, data.multiHouseEnabled, tenantLedgers)
+            },
+            onSavePdf = { uri ->
+                onSaveTenantPdf(uri, selectedTenant, propertyName, data.multiHouseEnabled, tenantLedgers)
             }
         )
     } else {
@@ -308,13 +326,15 @@ fun TenantsScreen(
             properties = data.properties,
             defaultPropertyId = defaultProp,
             showPropertySelector = data.multiHouseEnabled,
+            defaultElectricityRate = data.settings.defaultRatePerUnit,
+            effectiveMonthKey = data.selectedMonthKey,
             existing = editingTenant,
             isSaving = isSaving,
             onDismiss = {
                 onSetShowAddTenantSheet(false)
                 editingTenant = null
             },
-            onSave = { propId, name, room, phone, rent, defaultMaint, meterMode, initMeter, openBal, active ->
+            onSave = { propId, name, room, phone, rent, defaultMaint, meterMode, initMeter, elecRate, openBal, active ->
                 onSaveTenant(
                     editingTenant?.id,
                     propId,
@@ -325,6 +345,7 @@ fun TenantsScreen(
                     defaultMaint,
                     meterMode,
                     initMeter,
+                    elecRate,
                     openBal,
                     active
                 ) {
@@ -422,6 +443,9 @@ private fun TenantDirectoryCard(
                         if (tenant.defaultMaintenance > 0.005) {
                             append(" + ${BillingCalculator.formatInr(tenant.defaultMaintenance)} maint")
                         }
+                        if (tenant.tracksSubMeter) {
+                            append(" • ${BillingCalculator.formatInr(tenant.electricityRatePerUnit)}/kWh")
+                        }
                     }
                     Text(
                         text = subtitle,
@@ -460,14 +484,25 @@ private fun TenantPassbookScreen(
     showPropertyName: Boolean,
     ledgers: List<MonthlyLedger>,
     isSaving: Boolean,
+    isExportingPdf: Boolean,
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onToggleActive: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onSharePdf: () -> Unit,
+    onSavePdf: (Uri) -> Unit
 ) {
     BackHandler(onBack = onBack)
     var showDeleteConfirm by remember { mutableStateOf(false) }
     val currentNetBalance = ledgers.firstOrNull()?.closingBalance ?: tenant.openingBalance
+
+    val savePdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+        if (uri != null) {
+            onSavePdf(uri)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -595,14 +630,61 @@ private fun TenantPassbookScreen(
                         }
                         Column {
                             Text(
-                                if (tenant.tracksSubMeter) "Initial Meter" else "Meter Type",
+                                if (tenant.tracksSubMeter) "Unit Rate" else "Meter Type",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                if (tenant.tracksSubMeter) "${BillingCalculator.formatReading(tenant.initialMeterReading)} kWh" else "Direct Govt",
+                                if (tenant.tracksSubMeter) "${BillingCalculator.formatInr(tenant.electricityRatePerUnit)}/kWh" else "Direct Govt",
                                 style = MaterialTheme.typography.titleSmall
                             )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = onSharePdf,
+                            enabled = !isExportingPdf,
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("share_tenant_pdf_button")
+                        ) {
+                            if (isExportingPdf) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Share PDF", maxLines = 1)
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                savePdfLauncher.launch(TenantStatementPdfGenerator.buildSuggestedFileName(tenant))
+                            },
+                            enabled = !isExportingPdf,
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("save_tenant_pdf_button")
+                        ) {
+                            Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Save PDF", maxLines = 1)
                         }
                     }
                 }
@@ -725,23 +807,35 @@ private fun PassbookMonthRow(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = if (tracksSubMeter) {
-                        "Meter: ${BillingCalculator.formatReading(entry.prevReading)} → ${BillingCalculator.formatReading(entry.currReading)}"
+                        "Meter: ${BillingCalculator.formatReading(entry.prevReading)} → ${BillingCalculator.formatReading(entry.currReading)} (@ ${BillingCalculator.formatInr(entry.ratePerUnit)}/u)"
                     } else {
                         "Tenant pays DISCOM directly"
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
                 )
-                Text(
-                    text = "Paid (${entry.resolvedPaymentMode.label}): ${BillingCalculator.formatInr(entry.amountPaid)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Spacer(Modifier.width(8.dp))
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "Paid (${entry.resolvedPaymentMode.label}): ${BillingCalculator.formatInr(entry.amountPaid)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (entry.amountPaid > 0.005 && entry.paidDateMs > 0L) {
+                        Text(
+                            text = "Paid on ${BillingCalculator.formatPaymentDate(entry.paidDateMs)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
             if (entry.paymentNote.isNotBlank()) {
@@ -761,6 +855,8 @@ private fun TenantFormBottomSheet(
     properties: List<Property>,
     defaultPropertyId: String,
     showPropertySelector: Boolean,
+    defaultElectricityRate: Double,
+    effectiveMonthKey: String,
     existing: Tenant?,
     isSaving: Boolean,
     onDismiss: () -> Unit,
@@ -773,6 +869,7 @@ private fun TenantFormBottomSheet(
         defaultMaintenance: Double,
         meterTrackingMode: MeterTrackingMode,
         initialMeterReading: Double,
+        electricityRatePerUnit: Double,
         openingBalance: Double,
         active: Boolean
     ) -> Unit
@@ -808,6 +905,11 @@ private fun TenantFormBottomSheet(
     }
     var initMeterText by remember(existing?.id) {
         mutableStateOf(existing?.let { formatNumberInputWithZero(it.initialMeterReading) } ?: "0")
+    }
+    var elecRateText by remember(existing?.id, defaultElectricityRate) {
+        mutableStateOf(
+            formatNumberInputWithZero(existing?.electricityRatePerUnit ?: defaultElectricityRate)
+        )
     }
 
     val initialBalType = when {
@@ -956,16 +1058,46 @@ private fun TenantFormBottomSheet(
             }
 
             if (meterMode == MeterTrackingMode.SUB_METER) {
-                OutlinedTextField(
-                    value = initMeterText,
-                    onValueChange = { initMeterText = it; validationError = null },
-                    label = { Text("Initial Sub-Meter Reading (kWh)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("tenant_meter_input")
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = initMeterText,
+                        onValueChange = { initMeterText = it; validationError = null },
+                        label = { Text("Initial Reading (kWh)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("tenant_meter_input")
+                    )
+                    OutlinedTextField(
+                        value = elecRateText,
+                        onValueChange = { elecRateText = it; validationError = null },
+                        label = { Text("Unit Rate (₹/kWh) *") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("tenant_rate_input")
+                    )
+                }
+                val parsedDraftRate = elecRateText.toDoubleOrNull()
+                if (existing != null && parsedDraftRate != null && abs(parsedDraftRate - existing.electricityRatePerUnit) > 0.005) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Rate change applies from ${BillingCalculator.formatMonthFull(effectiveMonthKey)} onwards. Earlier months keep their original rate.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
             } else {
                 Surface(
                     color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.65f),
@@ -1029,6 +1161,9 @@ private fun TenantFormBottomSheet(
                     val parsedMeter = if (meterMode == MeterTrackingMode.DIRECT_GOVT_METER) {
                         existing?.initialMeterReading ?: 0.0
                     } else if (initMeterText.isBlank()) 0.0 else initMeterText.toDoubleOrNull()
+                    val parsedElecRate = if (meterMode == MeterTrackingMode.DIRECT_GOVT_METER) {
+                        existing?.electricityRatePerUnit ?: defaultElectricityRate
+                    } else elecRateText.toDoubleOrNull()
                     val parsedOpenAmt = if (balanceType == OpeningBalanceType.ZERO) {
                         0.0
                     } else {
@@ -1040,6 +1175,8 @@ private fun TenantFormBottomSheet(
                         parsedRent == null || parsedRent < 0.0 -> validationError = "Enter a valid monthly rent."
                         parsedMaint == null || parsedMaint < 0.0 -> validationError = "Enter a valid default maintenance amount."
                         parsedMeter == null || parsedMeter < 0.0 -> validationError = "Enter a valid initial meter reading."
+                        parsedElecRate == null || parsedElecRate < 0.0 || parsedElecRate > 1000.0 ->
+                            validationError = "Enter a valid electricity unit rate (₹0 to ₹1,000/kWh)."
                         parsedOpenAmt == null || parsedOpenAmt < 0.0 -> validationError = "Enter a valid opening balance amount."
                         else -> {
                             val signedOpening = when (balanceType) {
@@ -1056,6 +1193,7 @@ private fun TenantFormBottomSheet(
                                 parsedMaint,
                                 meterMode,
                                 parsedMeter,
+                                parsedElecRate,
                                 signedOpening,
                                 existing?.active ?: true
                             )
